@@ -7,6 +7,8 @@ Three layers, from strictest to broadest.
 | `npm test` | Unit tests. Fails if the app data disagrees with the fact base, an interaction rule fires (or doesn't) against expectations, rule math is off, values leave their ranges, or generated text uses forbidden language. |
 | `npm run audit` | Runs every pair (× 3 intensities × 4 start times) and every triple — 3,850 simulations. Writes `verify/out/audit-report.md` and `audit.json` with errors, grouped warnings, solo profiles and a full trace for every pair that fires a rule. |
 | `npm run log` | Runs 34 curated scenarios (single drugs and combinations) and records both layers every 30 simulated minutes: the model's numbers and what the synapse animation actually shows. Each scenario carries a textbook expectation and automatic checks. Writes `verify/out/sim-log.md` and `sim-log.json`. This is the file to hand to a reviewer. |
+| `npm run narrate -- caffeine:low nicotine alcohol` | **Animation → text, for auditing.** Steps the exact animation code the page uses, frame by frame at playback speed, and writes what happened in each time window (molecules released, bound, displaced, taken back up, drugs docking, receptors lighting up or blocked), an ASCII picture of the synapse, the model's numbers beside it, and FLAGS wherever the animation disagrees with the model. `--every 0.1` for finer windows, `--events` for every single event, `--all` to narrate every substance plus the mechanism combinations (writes `verify/out/narration-*.md`). |
+| `npm run glitch` | Counts visual glitches over a full playback: molecules jumping more than 25 px in a frame, receptors blinking, molecules popping in and out, drugs docking and leaving. |
 | `npm run trace -- cocaine ssri:high:+2` | One simulation, printed as a table every 30 min: cleft/signaling levels, transporter blockade, effect axes, brain regions, rules and summary. Add `--json` for raw output. |
 
 ## Files
@@ -14,6 +16,7 @@ Three layers, from strictest to broadest.
 - `reference.ts` — the fact base: class, agonist/antagonist, transporter targets, binding sites, metabolic interactions, time-to-peak and half-life ranges, expected effect directions. Written independently of `src/data/substances.ts` with sources listed at the top. **Change it only when the pharmacology is wrong, never to make a test pass.**
 - `data.test.ts` — app data vs. fact base, per substance.
 - `engine.test.ts` — rules for all 210 pairs, textbook scenarios, timing, rule math, invariants, text checks.
+- `narrate.ts` / `glitch.ts` — animation auditing; both run inside `npm test` (no flags and no glitches allowed).
 - `log.ts` — the review scenarios, their textbook expectations and per-scenario checks. The animation runs on a fixed random seed, so the log reproduces exactly.
 
 ## Having another model audit the results

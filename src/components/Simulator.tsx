@@ -119,7 +119,7 @@ export function Simulator() {
 
   const key = JSON.stringify(selections);
   const stale = result !== null && key !== ranWith;
-  const canRun = selections.length >= 2;
+  const canRun = selections.length >= 1;
 
   useEffect(() => {
     if (!playing) return;
@@ -241,7 +241,7 @@ export function Simulator() {
           <button className="btn primary run" onClick={run} disabled={!canRun}>
             {result && !stale ? 'Run again' : 'Run simulation'}
           </button>
-          {!canRun && <p className="hint">Pick at least two.</p>}
+          {!canRun && <p className="hint">Pick a substance from the library.</p>}
           {stale && <p className="hint warn">Changed since last run.</p>}
         </section>
 
@@ -487,10 +487,6 @@ export function Simulator() {
                 <span className="fig-sub">0–100, dashed line = baseline</span>
               </figcaption>
               <AxisCharts result={result} time={time} />
-              <p className="axis-note">
-                Mood valence shows the acute effect within 8 hours only. SSRIs and MAO inhibitors raise serotonin within
-                hours but take two to six weeks to change mood, so their mood line stays flat here.
-              </p>
             </figure>
           </>
         )}

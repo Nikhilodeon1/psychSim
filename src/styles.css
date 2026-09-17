@@ -901,13 +901,9 @@ body {
   color: var(--ink-3);
 }
 
-.axis-note {
-  margin-top: 14px;
-  padding-top: 10px;
-  border-top: 1px solid var(--rule-soft);
-  font-size: 12.5px;
-  line-height: 1.45;
-  color: var(--ink-2);
+.axis-label {
+  font: 500 12.5px var(--font);
+  fill: var(--ink-2);
 }
 
 /* Responsive */

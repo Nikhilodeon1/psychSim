@@ -369,15 +369,9 @@ export function SynapseCanvas({ result, timeRef, playingRef, seekRef }: Props) {
       // molecules
       for (const m of mols) {
         ctx.globalAlpha = Math.max(0, Math.min(1, m.alpha));
-        let x = m.x;
-        let y = m.y;
-        if (m.state === 'bound') {
-          const r = receptors.find((rr) => rr.main === m || rr.side === m);
-          if (r) {
-            x = r.side === m ? r.x + 19 : r.x;
-            y = r.pre ? (r.side === m ? PRE_Y + 4 : PRE_Y + 18) : r.side === m ? POST_Y - 4 : POST_Y - 18;
-          }
-        }
+        // bound molecules glide into their receptor seat in the model, so draw them where they are
+        const x = m.x;
+        const y = m.y;
         ctx.strokeStyle = INK;
         ctx.lineWidth = 1.1;
         if (m.kind === 'nt') {

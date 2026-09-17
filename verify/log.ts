@@ -501,7 +501,7 @@ for (const [id, f] of Object.entries(FACTS)) {
 function runScenario(sc: Scenario) {
   const sels = sc.args.map(parseSelection);
   const result: SimResult = simulate(sels);
-  const world: World = createWorld(result, seededRandom(20260917));
+  const world: World = createWorld(result, seededRandom(Number(process.env.SIM_SEED ?? 20260917)));
   // The canvas settles the particle model before its first frame; do the same here.
   for (let i = 0; i < 240; i++) stepWorld(world, 0, 1 / FPS);
 

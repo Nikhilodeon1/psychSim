@@ -413,7 +413,9 @@ function blurb(subs: SimSub[], rules: Rule[]): string[] {
   }
 
   if (out.length === 0) {
-    if (subs.length < 2) out.push('Select at least two substances to evaluate interaction mechanics.');
+    if (subs.length === 1)
+      out.push(`${subs[0].sub.name}: ${subs[0].sub.mechanism}`, 'Add a second or third substance to see how their mechanisms interact.');
+    else if (subs.length === 0) out.push('Select a substance to run the simulation.');
     else
       out.push(
         `No modeled interaction rules fired for ${list(subs.map((s) => s.sub.name))}: they share no transporter, binding site or clearance pathway during overlapping activity, so contributions sum linearly.`,

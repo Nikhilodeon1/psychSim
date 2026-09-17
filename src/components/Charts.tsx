@@ -72,7 +72,7 @@ export function NTChart({ result, time }: { result: SimResult; time: number }) {
 export function AxisCharts({ result, time }: { result: SimResult; time: number }) {
   const W = 360;
   const H = 120;
-  const L = 30;
+  const L = 44;
   const R = 8;
   const T = 8;
   const B = 22;
@@ -100,6 +100,15 @@ export function AxisCharts({ result, time }: { result: SimResult; time: number }
                   <text x={L - 6} y={y(v) + 4} textAnchor="end" className="tick">{v}</text>
                 </g>
               ))}
+              <text
+                x={10}
+                y={(T + H - B) / 2}
+                transform={`rotate(-90 10 ${(T + H - B) / 2})`}
+                textAnchor="middle"
+                className="axis-label"
+              >
+                Score (0–100)
+              </text>
               <line x1={L} x2={W - R} y1={y(base)} y2={y(base)} className="grid baseline" />
               {[0, 2, 4, 6, 8].map((h) => (
                 <text key={h} x={L + (h / DURATION) * (W - L - R)} y={H - 6} textAnchor="middle" className="tick">{h}h</text>

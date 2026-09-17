@@ -32,6 +32,8 @@ export type Mol = {
   pump?: number;
   alpha: number;
   seed?: number;
+  /** receptor this molecule is heading for, when the model needs one more receptor activated */
+  aim?: Receptor;
 };
 
 export type Vesicle = { x: number; y: number; hx: number; hy: number; nt: NT; phase: 'idle' | 'moving' | 'fusing'; t: number };
@@ -47,6 +49,8 @@ export type Receptor = {
   main: Mol | null;
   side: Mol | null;
   signal: number;
+  /** seconds before this receptor can be bound again after release, so it doesn't blink off/on */
+  rest: number;
 };
 
 export type Pump = { x: number; nt: NT; enzyme: boolean; phase: number; stall: number; reverse: number; plug: Mol | null; emit: number };
@@ -98,7 +102,7 @@ function layout(result: SimResult | null) {
   const receptors: Receptor[] = [];
   const addGroup = (family: string, nt: NT | null, from: number, to: number, count: number, lig: string | null = null, pre = false) => {
     for (let i = 0; i < count; i++)
-      receptors.push({ x: from + ((to - from) * (i + 0.5)) / count, family, nt, lig, pre, main: null, side: null, signal: 0 });
+      receptors.push({ x: from + ((to - from) * (i + 0.5)) / count, family, nt, lig, pre, main: null, side: null, signal: 0, rest: 0 });
   };
   addGroup(NT_INFO[nts[0]].receptor, nts[0], 290, 450, 4);
   addGroup(NT_INFO[nts[1]].receptor, nts[1], 510, 670, 4);
@@ -133,29 +137,49 @@ export function createWorld(result: SimResult | null, random: () => number = Mat
   rng = random;
   const subs = result?.subs ?? [];
   const directActions = subs.flatMap((s, i) => s.sub.sim.receptors.filter((r) => r.direct).map((r) => ({ subIdx: i, slot: s.slot, ...r })));
-  return { ...layout(result), result, subs, directActions, random };
+  return { ...layout(result), result, subs, directActions, random, clock: 0, nextAdjust: new Map<string, number>() };
 }
 
 /** Advance the particle model by dt seconds of animation at simulation time t (hours). */
 export function stepWorld(world: World, t: number, dt: number) {
   rng = world.random;
   const { result, subs, directActions } = world;
+  world.clock += dt;
   const releaseReceptor = (m: Mol) => {
     for (const r of world.receptors) {
-      if (r.main === m) r.main = null;
+      if (r.main === m) {
+        r.main = null;
+        r.rest = rand(0.5, 0.8);
+      }
       if (r.side === m) r.side = null;
     }
   };
+  const seatOf = (r: Receptor, side: boolean): [number, number] => [
+    side ? r.x + 19 : r.x,
+    r.pre ? (side ? PRE_Y + 4 : PRE_Y + 18) : side ? POST_Y - 4 : POST_Y - 18,
+  ];
+  for (const r of world.receptors) r.rest = Math.max(0, r.rest - dt);
 
   const { nts, receptors, pumps, vesicles, mols } = world;
   const level = (n: NT) => (result ? sample(result.cleft[n], t) : 1);
+
+  // Excess that transporters can't take back (blocked or reversed) diffuses out of the synapse instead.
+  for (const n of nts) {
+    const loose = mols.filter((m) => m.kind === 'nt' && m.nt === n && m.state === 'free' && !m.aim);
+    const live = mols.filter((m) => m.kind === 'nt' && m.nt === n && m.state !== 'fade').length;
+    const stuck = pumps.filter((p) => p.nt === n && !p.enzyme).every((p) => Math.max(p.stall, p.reverse) > 0.5);
+    if (stuck && live > moleculeTarget(level(n)) + 2 && loose.length && rng() < dt * 3) loose[Math.floor(rng() * loose.length)].state = 'fade';
+  }
 
   // Vesicle release keeps the number of molecules in the cleft tracking the modeled level:
   // release only while below target, and only one vesicle at a time per transmitter.
   for (const n of nts) {
     const live = mols.filter((m) => m.kind === 'nt' && m.nt === n && m.state !== 'fade').length;
     const inFlight = vesicles.filter((v) => v.nt === n && v.phase !== 'idle').length;
-    const deficit = moleculeTarget(level(n)) - live;
+    const reversal = result ? sample(result.reversal[n], t) : 0;
+    // when transporters run in reverse, that is where the extra transmitter comes from, so vesicles only
+    // fill part of the target and the reversed transporters visibly pump out the rest
+    const deficit = moleculeTarget(level(n)) * (reversal > 0.15 ? 1 - 0.6 * Math.min(1, reversal) : 1) - live;
     // a second vesicle only when far below target, so release does not overshoot
     if (deficit > 2 && inFlight < (deficit > 6 ? 2 : 1)) {
       const v = vesicles.find((ves) => ves.nt === n && ves.phase === 'idle' && ves.t <= 0);
@@ -190,16 +214,17 @@ export function stepWorld(world: World, t: number, dt: number) {
     if (r > 0.15 && !p.enzyme) {
       p.emit += dt * r * 3;
       const liveNt = mols.filter((m) => m.kind === 'nt' && m.nt === p.nt && m.state !== 'fade').length;
-      if (p.emit >= 1 && liveNt < moleculeTarget(level(p.nt))) {
+      if (p.emit >= 1 && liveNt < moleculeTarget(level(p.nt)) + (r > 0.3 ? 4 : 0)) {
         p.emit = 0;
         mols.push({ kind: 'nt', nt: p.nt, x: p.x + rand(-3, 3), y: CLEFT_TOP + 2, vx: rand(-20, 20), vy: rand(50, 90), state: 'free', timer: 0, alpha: 1 });
       }
     }
-    if (p.plug && (b < 0.15 || p.plug.state === 'fade')) {
+    const plugGone = p.plug && p.plug.kind === 'drug' && sample(subs[p.plug.sub!].activity, t) < 0.05;
+    if (p.plug && (b < 0.1 || plugGone || p.plug.state === 'fade')) {
       p.plug.state = 'fade';
       p.plug = null;
     }
-    if (!p.plug && b > 0.2 && !p.enzyme) {
+    if (!p.plug && b > 0.25 && !p.enzyme) {
       const blocker = mols.find((m) => {
         if (m.kind !== 'drug' || m.state !== 'free') return false;
         const sim = subs[m.sub!].sub.sim;
@@ -236,15 +261,33 @@ export function stepWorld(world: World, t: number, dt: number) {
     const target = Math.round(Math.min(12, sample(s.activity, t) * 10));
     const live = mols.filter((m) => m.kind === 'drug' && m.sub === i && m.state !== 'fade');
     if (live.length < target) {
-      const left = rng() < 0.5;
+      const targets = [
+        ...receptors.filter((r) => directActions.some((d) => d.subIdx === i && d.family === r.family)).map((r) => r.x),
+        ...pumps.filter((p) => !p.enzyme && (s.sub.sim.clearance[p.nt] ?? 0) >= 0.3).map((p) => p.x),
+      ];
+      const left = targets.length ? targets[Math.floor(rng() * targets.length)] < W / 2 : rng() < 0.5;
       mols.push({ kind: 'drug', slot: s.slot, sub: i, x: left ? 70 : W - 70, y: rand(CLEFT_TOP + 10, CLEFT_BOT - 10), vx: left ? rand(40, 90) : rand(-90, -40), vy: 0, state: 'free', timer: 0, alpha: 1, seed: Math.floor(rng() * 1000) });
-    } else if (live.length > target) {
-      const m = live.find((mm) => mm.state === 'free') ?? live[0];
-      releaseReceptor(m);
-      for (const p of pumps) if (p.plug === m) p.plug = null;
-      m.state = 'fade';
+    } else if (live.length > target + (target > 0 ? 1 : 0)) {
+      // only let a loose molecule go; bound or docked ones leave on their own timers
+      const m = live.find((mm) => mm.state === 'free');
+      if (m) m.state = 'fade';
     }
   });
+
+  // How many more receptors each family may light up right now, from the model. Agonists (transmitter, natural
+  // messenger or drug) only bind when there is room, so occupancy follows the model without snapping anything.
+  const isAntagonistAt = (m: Mol, family: string) =>
+    m.kind === 'drug' && directActions.some((d) => d.subIdx === m.sub && d.family === family && d.mode === 'antagonist');
+  const allowance = new Map<string, number>();
+  for (const family of new Set(receptors.map((r) => r.family))) {
+    const group = receptors.filter((r) => r.family === family);
+    const blocked = group.filter((r) => r.main && isAntagonistAt(r.main, family)).length;
+    const lit = group.filter((r) => r.main && !isAntagonistAt(r.main, family)).length;
+    const target = Math.min(group.length - blocked, group.length * targetOccupancy(familyDrive(world, t, family)));
+    allowance.set(family, target - lit);
+  }
+  const mayActivate = (r: Receptor) => (allowance.get(r.family) ?? 0) > 0.4;
+  const didActivate = (r: Receptor) => allowance.set(r.family, (allowance.get(r.family) ?? 0) - 1);
 
   for (const m of mols) {
     if (m.state === 'fade') {
@@ -252,12 +295,32 @@ export function stepWorld(world: World, t: number, dt: number) {
       continue;
     }
     if (m.state === 'docked') {
+      // travel into the transporter at a capped speed so docking reads as movement, not a jump
       const p = pumps[m.pump!];
-      m.x += (p.x - m.x) * Math.min(1, dt * 8);
-      m.y += (PRE_Y - 4 - m.y) * Math.min(1, dt * 8);
+      const dx = p.x - m.x;
+      const dy = PRE_Y - 4 - m.y;
+      const dist = Math.hypot(dx, dy);
+      const stepLen = Math.min(dist, 220 * dt);
+      if (dist > 0) {
+        m.x += (dx / dist) * stepLen;
+        m.y += (dy / dist) * stepLen;
+      }
       continue;
     }
     if (m.state === 'bound') {
+      const seat = world.receptors.find((r) => r.main === m || r.side === m);
+      if (seat) {
+        // glide into the seat quickly but at a capped speed, so a far-off start never jumps
+        const [sx, sy] = seatOf(seat, seat.side === m);
+        const dx = sx - m.x;
+        const dy = sy - m.y;
+        const dist = Math.hypot(dx, dy);
+        const stepLen = Math.min(dist * Math.min(1, dt * 12), 400 * dt);
+        if (dist > 0) {
+          m.x += (dx / dist) * stepLen;
+          m.y += (dy / dist) * stepLen;
+        }
+      }
       m.timer -= dt;
       if (m.timer <= 0) {
         releaseReceptor(m);
@@ -297,8 +360,29 @@ export function stepWorld(world: World, t: number, dt: number) {
         m.timer -= dt;
         if (m.timer <= 0) m.state = 'fade';
       }
-      m.vx *= 0.96;
-      m.vy *= 0.96;
+      if (m.aim) {
+        const aim = m.aim;
+        const blocksHere = m.kind === 'drug' && directActions.some((d) => d.subIdx === m.sub && d.family === aim.family && d.mode === 'antagonist');
+        const occupiedByBlocker =
+          !!aim.main && aim.main.kind === 'drug' && directActions.some((d) => d.subIdx === aim.main!.sub && d.family === aim.family && d.mode === 'antagonist');
+        // agonists give up on a taken or resting receptor; an antagonist only gives up if another antagonist got there first
+        const giveUp = blocksHere ? occupiedByBlocker : !!aim.main || aim.rest > 0;
+        if (giveUp) m.aim = undefined;
+        else {
+          // head for the receptor at a steady travel speed (slowing on arrival), well below a visible jump
+          const dx = m.aim.x - m.x;
+          const dy = (m.aim.pre ? CLEFT_TOP + 4 : CLEFT_BOT - 4) - m.y;
+          const dist = Math.hypot(dx, dy) || 1;
+          const speed = Math.min(170, dist * 6);
+          const blend = Math.min(1, dt * 8);
+          m.vx += ((dx / dist) * speed - m.vx) * blend;
+          m.vy += ((dy / dist) * speed - m.vy) * blend;
+        }
+      }
+      if (!m.aim) {
+        m.vx *= 0.96;
+        m.vy *= 0.96;
+      }
     }
     m.x += m.vx * dt;
     m.y += m.vy * dt;
@@ -313,8 +397,10 @@ export function stepWorld(world: World, t: number, dt: number) {
       // clear the excess quickly, so the count in the cleft follows the modeled level,
       // but leave molecules that have reached the receptors alone so binding still happens
       const excess = live - moleculeTarget(level(m.nt!));
-      const nearReceptors = m.y > CLEFT_BOT - 26;
-      const rate = nearReceptors ? 0.02 : excess > 0 ? 1.2 + excess * 0.5 : 0.04;
+      // near the receptors a molecule gets a chance to bind, but only if one of its receptors is actually free
+      const nearReceptors =
+        m.y > CLEFT_BOT - 26 && receptors.some((rr) => rr.nt === m.nt && !rr.main && rr.rest <= 0);
+      const rate = m.aim || nearReceptors ? 0.02 : excess > 0 ? 1.2 + excess * 0.5 : 0.04;
       if (rng() < dt * rate) {
         const own = pumps.map((p, i) => (p.nt === m.nt ? i : -1)).filter((i) => i >= 0);
         m.pump = own[Math.floor(rng() * own.length)];
@@ -322,21 +408,26 @@ export function stepWorld(world: World, t: number, dt: number) {
         continue;
       }
       if (m.y > CLEFT_BOT - 12) {
-        const r = receptors.find((rr) => rr.nt === m.nt && !rr.main && Math.abs(rr.x - m.x) < 14);
-        if (r && rng() < 0.6) {
+        const r = receptors.find((rr) => rr.nt === m.nt && !rr.main && rr.rest <= 0 && Math.abs(rr.x - m.x) < 14);
+        if (r && (m.aim === r || (mayActivate(r) && rng() < 0.6))) {
+          didActivate(r);
           r.main = m;
           m.state = 'bound';
-          m.timer = rand(0.5, 1);
+          m.aim = undefined;
+          m.timer = rand(0.8, 1.4);
         }
       }
     } else if (m.kind === 'endo') {
       const r = receptors.find(
-        (rr) => rr.lig === m.lig && !rr.main && Math.abs(rr.x - m.x) < 14 && (rr.pre ? m.y < CLEFT_TOP + 14 : m.y > CLEFT_BOT - 14),
+        (rr) =>
+          rr.lig === m.lig && !rr.main && rr.rest <= 0 && Math.abs(rr.x - m.x) < 14 && (rr.pre ? m.y < CLEFT_TOP + 14 : m.y > CLEFT_BOT - 14),
       );
-      if (r && rng() < 0.6) {
+      if (r && (m.aim === r || (mayActivate(r) && rng() < 0.6))) {
+        didActivate(r);
         r.main = m;
         m.state = 'bound';
-        m.timer = rand(0.6, 1.2);
+        m.aim = undefined;
+        m.timer = rand(0.8, 1.4);
       }
     } else {
       const acts = directActions.filter((d) => d.subIdx === m.sub);
@@ -355,8 +446,13 @@ export function stepWorld(world: World, t: number, dt: number) {
             const occ = r.main;
             // competitive antagonists push out both drug agonists and the natural messenger
             const displace =
-              act.mode === 'antagonist' && ((occ?.kind === 'drug' && occ.slot !== m.slot) || occ?.kind === 'endo') && rng() < 0.4;
-            if (!occ || displace) {
+              act.mode === 'antagonist' &&
+              !!occ &&
+              !isAntagonistAt(occ, r.family) &&
+              (m.aim === r || (((occ.kind === 'drug' && occ.slot !== m.slot) || occ.kind === 'endo') && rng() < 0.4));
+            const agonistAllowed = act.mode === 'antagonist' || m.aim === r || mayActivate(r);
+            if ((!occ && r.rest <= 0 && agonistAllowed) || displace) {
+              if (act.mode !== 'antagonist') didActivate(r);
               if (occ) {
                 occ.state = 'free';
                 occ.vy = r.pre ? rand(50, 90) : rand(-90, -50);
@@ -364,6 +460,7 @@ export function stepWorld(world: World, t: number, dt: number) {
               }
               r.main = m;
               m.state = 'bound';
+              m.aim = undefined;
               m.timer = rand(0.9, 1.8) * (act.mode === 'antagonist' ? 2 : 1) * (subs[m.sub!].stretched ? 1.5 : 1);
             }
           }
@@ -399,38 +496,81 @@ export function stepWorld(world: World, t: number, dt: number) {
       on = antagonist ? 0 : 1;
     }
     if (on && r.side) on = 1.6;
-    r.signal += (on - r.signal) * Math.min(1, dt * 10);
+    r.signal += (on - r.signal) * Math.min(1, dt * 7);
   }
 
   // Keep the number of activated receptors matching the model: more signaling at a receptor family
-  // must mean more of its receptors lit up. Nudge by at most one receptor per family per step.
+  // must mean more of its receptors lit up. To avoid flicker, act only outside a deadband and at most
+  // every ~0.5 s per family; add by guiding a nearby molecule to a free receptor, remove by letting one go.
   for (const family of new Set(receptors.map((r) => r.family))) {
+    if ((world.nextAdjust.get(family) ?? 0) > world.clock) continue;
     const group = receptors.filter((r) => r.family === family);
     const isAntagonist = (m: Mol) =>
       m.kind === 'drug' && directActions.some((d) => d.subIdx === m.sub && d.family === family && d.mode === 'antagonist');
     const blocked = group.filter((r) => r.main && isAntagonist(r.main)).length;
-    const active = group.filter((r) => r.signal > 0.5).length;
-    const want = Math.min(group.length - blocked, Math.round(group.length * targetOccupancy(familyDrive(world, t, family))));
-    if (active < want) {
-      const free = group.find((r) => !r.main);
+    const lit = group.filter((r) => r.main && !isAntagonist(r.main)).length;
+    const heading = mols.filter((m) => m.aim && group.includes(m.aim)).length;
+    const target = Math.min(group.length - blocked, group.length * targetOccupancy(familyDrive(world, t, family)));
+    let acted = false;
+    // Antagonists: hold about as many receptors as their activity implies.
+    const antagonistActivity = directActions
+      .filter((d) => d.family === family && d.mode === 'antagonist')
+      .reduce((a, d) => a + sample(subs[d.subIdx].activity, t), 0);
+    if (antagonistActivity > 0.02) {
+      const wantBlocked = group.length * Math.min(0.9, antagonistActivity);
+      if (blocked <= wantBlocked + 0.3)
+        for (const r of group) if (r.main && isAntagonist(r.main) && r.main.timer < 0.8) r.main.timer += rand(0.8, 1.2);
+      if (blocked < wantBlocked - 0.6) {
+        // guide as many blockers as the model is short of, each to its own receptor
+        const seats = group.filter((r) => !(r.main && isAntagonist(r.main)) && !mols.some((m) => m.aim === r));
+        const short = Math.max(1, Math.round(wantBlocked - blocked));
+        for (const seat of seats.slice(0, short)) {
+          const blocker = mols
+            .filter((m) => m.state === 'free' && !m.aim && isAntagonist(m))
+            .sort((a, b) => Math.abs(a.x - seat.x) - Math.abs(b.x - seat.x))[0];
+          if (!blocker) break;
+          blocker.aim = seat;
+          acted = true;
+        }
+      } else if (blocked > wantBlocked + 0.6) {
+        const r = group.find((x) => x.main && isAntagonist(x.main));
+        if (r?.main) {
+          r.main.timer = Math.min(r.main.timer, rand(0.3, 0.5));
+          acted = true;
+        }
+      }
+    }
+    if (lit <= target) {
+      // at or below target, keep molecules that are already bound in place: sustained occupancy instead of
+      // every receptor timing out together and going dark at once
+      for (const r of group) if (r.main && !isAntagonist(r.main) && r.main.timer < 0.6) r.main.timer += rand(0.6, 1.0);
+    }
+    if (lit + heading < target - 0.6) {
+      // guide as many loose molecules as the model is short of, each to its own free receptor
       const canActivate = (m: Mol) =>
-        (m.state === 'free' || m.state === 'uptake') &&
+        m.state === 'free' &&
+        !m.aim &&
         (m.kind === 'nt'
           ? m.nt === group[0].nt
           : m.kind === 'endo'
             ? m.lig === group[0].lig
             : directActions.some((d) => d.subIdx === m.sub && d.family === family && d.mode !== 'antagonist'));
-      const near = mols.filter(canActivate).sort((a, b) => Math.abs(a.x - (free?.x ?? 0)) - Math.abs(b.x - (free?.x ?? 0)))[0];
-      if (free && near) {
-        near.state = 'bound';
-        near.pump = undefined;
-        free.main = near;
-        near.timer = rand(0.8, 1.8);
+      const seats = group.filter((r) => !r.main && r.rest <= 0 && !mols.some((m) => m.aim === r));
+      for (const seat of seats.slice(0, Math.max(1, Math.round(target - lit - heading)))) {
+        const near = mols.filter(canActivate).sort((a, b) => Math.abs(a.x - seat.x) - Math.abs(b.x - seat.x))[0];
+        if (!near) break;
+        near.aim = seat;
+        acted = true;
       }
-    } else if (active > want) {
-      const bound = group.find((r) => r.main && !isAntagonist(r.main) && r.signal > 0.5);
-      if (bound?.main) bound.main.timer = 0;
+    } else if (lit > target + 0.6) {
+      // only let go of a molecule that has been bound long enough to be seen, so nothing flashes on and off
+      const r = group.find((x) => x.main && !isAntagonist(x.main) && x.signal > 0.95 && x.main.timer > 0.5);
+      if (r?.main) {
+        r.main.timer = rand(0.3, 0.5);
+        acted = true;
+      }
     }
+    world.nextAdjust.set(family, world.clock + (acted ? rand(0.25, 0.4) : 0.1));
   }
 }
 

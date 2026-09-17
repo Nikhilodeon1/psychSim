@@ -11,7 +11,9 @@
     "audit": "tsx verify/audit.ts",
     "trace": "tsx verify/trace.ts",
     "log": "tsx verify/log.ts",
-    "content": "tsx verify/content.ts"
+    "content": "tsx verify/content.ts",
+    "glitch": "tsx verify/glitch.ts",
+    "narrate": "tsx verify/narrate.ts"
   },
   "dependencies": {
     "react": "^19.3.0",
