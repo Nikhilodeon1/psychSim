@@ -52,6 +52,28 @@ export type Receptor = {
 export type Pump = { x: number; nt: NT; enzyme: boolean; phase: number; stall: number; reverse: number; plug: Mol | null; emit: number };
 
 
+/**
+ * How strongly a receptor family is being driven right now.
+ * For a transmitter's own receptors this is the model's signaling value; for a receptor only a drug acts on
+ * (mu-opioid, CB1, A2A, NMDA) it is the natural messenger's baseline plus agonists minus antagonists.
+ */
+export function familyDrive(world: World, t: number, family: string): number {
+  const { result, subs, directActions } = world;
+  const rec = world.receptors.find((r) => r.family === family);
+  if (!rec) return 0;
+  if (rec.nt) return result ? sample(result.nt[rec.nt], t) : 1;
+  let drive = rec.lig ? 1 : 0;
+  for (const d of directActions) {
+    if (d.family !== family) continue;
+    const a = result ? sample(subs[d.subIdx].activity, t) : 0;
+    drive += d.mode === 'antagonist' ? -a : a;
+  }
+  return Math.max(0, drive);
+}
+
+/** Share of a receptor family's receptors that should be shown activated at a given drive. */
+export const targetOccupancy = (drive: number) => Math.max(0, Math.min(0.9, 0.3 * drive));
+
 /** How many molecules of a transmitter the cleft should show at a given modeled level (1 = baseline). */
 export const moleculeTarget = (level: number) => Math.min(40, 7 * level);
 
@@ -288,9 +310,11 @@ export function stepWorld(world: World, t: number, dt: number) {
 
     if (m.kind === 'nt') {
       const live = mols.filter((x) => x.kind === 'nt' && x.nt === m.nt && x.state !== 'fade').length;
-      // clear the excess quickly, so the count in the cleft follows the modeled level
+      // clear the excess quickly, so the count in the cleft follows the modeled level,
+      // but leave molecules that have reached the receptors alone so binding still happens
       const excess = live - moleculeTarget(level(m.nt!));
-      const rate = excess > 0 ? 1.2 + excess * 0.5 : 0.04;
+      const nearReceptors = m.y > CLEFT_BOT - 26;
+      const rate = nearReceptors ? 0.02 : excess > 0 ? 1.2 + excess * 0.5 : 0.04;
       if (rng() < dt * rate) {
         const own = pumps.map((p, i) => (p.nt === m.nt ? i : -1)).filter((i) => i >= 0);
         m.pump = own[Math.floor(rng() * own.length)];
@@ -376,6 +400,37 @@ export function stepWorld(world: World, t: number, dt: number) {
     }
     if (on && r.side) on = 1.6;
     r.signal += (on - r.signal) * Math.min(1, dt * 10);
+  }
+
+  // Keep the number of activated receptors matching the model: more signaling at a receptor family
+  // must mean more of its receptors lit up. Nudge by at most one receptor per family per step.
+  for (const family of new Set(receptors.map((r) => r.family))) {
+    const group = receptors.filter((r) => r.family === family);
+    const isAntagonist = (m: Mol) =>
+      m.kind === 'drug' && directActions.some((d) => d.subIdx === m.sub && d.family === family && d.mode === 'antagonist');
+    const blocked = group.filter((r) => r.main && isAntagonist(r.main)).length;
+    const active = group.filter((r) => r.signal > 0.5).length;
+    const want = Math.min(group.length - blocked, Math.round(group.length * targetOccupancy(familyDrive(world, t, family))));
+    if (active < want) {
+      const free = group.find((r) => !r.main);
+      const canActivate = (m: Mol) =>
+        (m.state === 'free' || m.state === 'uptake') &&
+        (m.kind === 'nt'
+          ? m.nt === group[0].nt
+          : m.kind === 'endo'
+            ? m.lig === group[0].lig
+            : directActions.some((d) => d.subIdx === m.sub && d.family === family && d.mode !== 'antagonist'));
+      const near = mols.filter(canActivate).sort((a, b) => Math.abs(a.x - (free?.x ?? 0)) - Math.abs(b.x - (free?.x ?? 0)))[0];
+      if (free && near) {
+        near.state = 'bound';
+        near.pump = undefined;
+        free.main = near;
+        near.timer = rand(0.8, 1.8);
+      }
+    } else if (active > want) {
+      const bound = group.find((r) => r.main && !isAntagonist(r.main) && r.signal > 0.5);
+      if (bound?.main) bound.main.timer = 0;
+    }
   }
 }
 

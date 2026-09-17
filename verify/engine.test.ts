@@ -24,7 +24,17 @@ function expectedRules(a: string, b: string) {
     (fa.sites?.D2 === 'antagonist' && RAISES_DOPAMINE.includes(b)) || (fb.sites?.D2 === 'antagonist' && RAISES_DOPAMINE.includes(a));
   const competition = sharedSites.length > 0 || antagonistVsDopamine;
   const metabolic = (fa.slows?.includes(b) ? 1 : 0) + (fb.slows?.includes(a) ? 1 : 0);
-  return { stacking, competition, metabolic };
+  // A releaser needs the transporter a blocker is sitting on, so that pair competes instead of stacking.
+  const substrateClash = NT_LIST.filter(
+    (n) =>
+      (fa.reverses?.includes(n) && fb.blocksClearance?.[n] === 'transporter' && !fb.reverses?.includes(n)) ||
+      (fb.reverses?.includes(n) && fa.blocksClearance?.[n] === 'transporter' && !fa.reverses?.includes(n)),
+  );
+  return {
+    stacking: stacking.filter((n) => !substrateClash.includes(n)),
+    competition: competition || substrateClash.length > 0,
+    metabolic,
+  };
 }
 
 describe('interaction rules agree with the fact base for all pairs (same start time)', () => {
@@ -51,7 +61,7 @@ describe('textbook scenarios', () => {
   });
   it('alcohol + benzodiazepine: distinct GABA-A sites do not compete; metabolism is slowed', () => {
     const r = simulate([sel('alcohol'), sel('benzodiazepines')]);
-    expect(kinds(r)).toEqual(['metabolic']);
+    expect(kinds(r)).toEqual(['convergence', 'metabolic']);
     expect(r.blurb.join(' ')).toMatch(/distinct binding sites/);
   });
   it('LSD + psilocybin compete at 5-HT2A', () => {
@@ -62,6 +72,25 @@ describe('textbook scenarios', () => {
     const solo = simulate([sel('amphetamines')]);
     const combo = simulate([sel('amphetamines'), sel('antipsychotics')]);
     expect(Math.max(...combo.nt.DA)).toBeLessThan(Math.max(...solo.nt.DA));
+  });
+  it('two depressants at different receptors are reported as convergent, not as no interaction', () => {
+    const r = simulate([sel('morphine-heroin'), sel('benzodiazepines')]);
+    expect(kinds(r)).toEqual(['convergence']);
+    expect(r.blurb.join(' ')).toMatch(/brainstem/);
+    expect(r.blurb.join(' ')).not.toMatch(/No modeled interaction rules/);
+    const solo = simulate([sel('morphine-heroin')]);
+    expect(Math.max(...r.axes.load)).toBeGreaterThan(Math.max(...solo.axes.load) + 8);
+  });
+  it('a releaser and a blocker of the same transporter compete for it', () => {
+    const r = simulate([sel('mdma'), sel('ssri')]);
+    const comp = r.rules.find((x) => x.kind === 'competition');
+    expect(comp && comp.kind === 'competition' && comp.site).toBe('SERT (substrate site)');
+    expect(r.rules.some((x) => x.kind === 'stacking' && x.nt === '5HT')).toBe(false);
+    const solo = simulate([sel('mdma')]);
+    expect(Math.max(...r.cleft['5HT']), 'an SSRI should blunt MDMA release, not amplify it').toBeLessThan(Math.max(...solo.cleft['5HT']));
+  });
+  it('a competitive antagonist leaves the agonist with little potency', () => {
+    expect(simulate([sel('morphine-heroin'), sel('opioid-antagonists')]).subs[0].potency).toBeLessThan(0.2);
   });
   it('caffeine + nicotine: no interaction rules', () => {
     expect(simulate([sel('caffeine'), sel('nicotine')]).rules).toEqual([]);
@@ -159,7 +188,7 @@ describe('metabolic timing', () => {
   it('clearance is unchanged until the slowing substance arrives, then the curve decays more slowly', () => {
     const solo = simulate([sel('benzodiazepines')]);
     const combo = simulate([sel('benzodiazepines'), sel('alcohol', 'typical', 4)]);
-    expect(combo.rules.map((r) => r.kind)).toEqual(['metabolic']);
+    expect(combo.rules.map((r) => r.kind).sort()).toEqual(['convergence', 'metabolic']);
     const k4 = Math.round((4 / DURATION) * STEPS);
     for (let k = 0; k <= k4; k++) expect(combo.subs[0].activity[k]).toBeCloseTo(solo.subs[0].activity[k], 9);
     expect(combo.subs[0].activity[STEPS]).toBeGreaterThan(solo.subs[0].activity[STEPS]);

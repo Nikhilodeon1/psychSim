@@ -59,13 +59,25 @@ const SCENARIOS: Scenario[] = [
     checks: [
       { desc: 'DAT shown reversed at 2 h', test: (l) => at(l, 2).animation.transporters.some((p) => p.name === 'DAT' && p.status.startsWith('Reversed')) },
       { desc: 'Cleft dopamine > 2× at peak', test: (l) => peak(l, (c) => c.model.cleft.DA) > 2 },
+      { desc: 'Not supra-additive: cocaine blocks the transporter amphetamine needs', test: (l) => peak(l, (c) => c.model.cleft.DA) < 3.2 },
     ],
   },
   {
     id: 'mdma-ssri',
     title: 'MDMA with an SSRI',
     args: ['mdma', 'ssri'],
-    expect: 'REVIEW CAREFULLY: MDMA needs SERT to enter the terminal and reverse it. SSRI pretreatment is documented to blunt MDMA-induced serotonin release. SSRIs also slow MDMA metabolism (CYP2D6).',
+    expect: 'MDMA needs SERT to enter the terminal and reverse it, so an SSRI occupying SERT blunts MDMA-induced serotonin release rather than adding to it. SSRIs also slow MDMA metabolism (CYP2D6).',
+    checks: [
+      { desc: 'Competition for the transporter, not stacking', test: (l) => l.rules.some((r) => r.includes('SERT (substrate site)')) && !l.rules.some((r) => r.startsWith('stacking')) },
+      { desc: 'Peak serotonin lower than MDMA alone', test: (l) => peak(l, (c) => c.model.cleft['5HT']) < 3.2 },
+    ],
+  },
+  {
+    id: 'ssri-then-mdma',
+    title: 'SSRI first, MDMA 4 h later (pretreatment)',
+    args: ['ssri', 'mdma:typical:+4'],
+    expect: 'With the transporter already occupied, MDMA gets much less access, so its serotonin release should be clearly smaller than MDMA taken alone.',
+    checks: [{ desc: 'Peak serotonin well below MDMA alone', test: (l) => peak(l, (c) => c.model.cleft['5HT']) < 2.6 }],
   },
   {
     id: 'maoi-ssri',
@@ -90,6 +102,7 @@ const SCENARIOS: Scenario[] = [
       { desc: 'Competition rule names the antagonist', test: (l) => l.rules.some((r) => r.startsWith('competition') && r.includes('antagonist')) },
       { desc: 'Endorphins shown', test: (l) => l.labels.includes('Endorphins') },
       { desc: 'Some mu-opioid receptors shown blocked at 0.5 h', test: (l) => (recv(at(l, 0.5), 'μ-opioid')?.blocked ?? 0) > 0 },
+      { desc: 'Morphine potency cut to under a fifth', test: (l) => l.subs[0].lowestPotency < 0.2 },
     ],
   },
   {
@@ -107,8 +120,8 @@ const SCENARIOS: Scenario[] = [
     id: 'oxy-ssri',
     title: 'Prescription opioid + SSRI',
     args: ['rx-opioids', 'ssri'],
-    expect: 'Fluoxetine/paroxetine inhibit CYP2D6, which contributes to oxycodone metabolism; illustrative slowed clearance. No shared receptor or transporter.',
-    checks: [{ desc: 'Metabolic interaction only', test: (l) => l.rules.length === 1 && l.rules[0].startsWith('metabolic') }],
+    expect: 'No shared receptor or transporter, and no clearance rule: CYP2D6 inhibition by an SSRI reduces how much oxycodone becomes its active metabolite rather than simply making the opioid last longer, so the app should not claim slowed clearance here. (The real SSRI-opioid concern is serotonin syndrome with tramadol, fentanyl or methadone, which this library does not include.)',
+    checks: [{ desc: 'No interaction rule claimed', test: (l) => l.rules.length === 0 }],
   },
   {
     id: 'alcohol-benzo',
@@ -287,7 +300,7 @@ const SCENARIOS: Scenario[] = [
     expect: 'Adenosine receptor antagonist: it blocks A2A receptors rather than acting on a neurotransmitter transporter. Adenosine, the natural messenger, should be visible and displaced. Arousal rises.',
     checks: [
       { desc: 'Adenosine shown', test: (l) => l.labels.includes('Adenosine') },
-      { desc: 'A2A receptors shown blocked', test: (l) => l.timeline.some((c) => (recv(c, 'A2A')?.blocked ?? 0) > 0) },
+      { desc: 'A1 receptors shown blocked', test: (l) => l.timeline.some((c) => (recv(c, 'A1')?.blocked ?? 0) > 0) },
       { desc: 'No transporter blockade', test: (l) => l.timeline.every((c) => c.animation.transporters.every((p) => p.blockedPct === 0)) },
     ],
   },
@@ -360,8 +373,11 @@ const MORE: Scenario[] = [
     id: 'morphine-benzo',
     title: 'Opioid + benzodiazepine',
     args: ['morphine-heroin', 'benzodiazepines'],
-    expect: 'Different receptors (mu-opioid and GABA-A) but both depress brainstem function; physiological load should be high. No shared binding site, so no competition rule.',
-    checks: [{ desc: 'Brainstem above 50 at peak', test: (l) => peak(l, (c) => c.model.regions.brainstem * 100) > 50 }],
+    expect: 'Different receptors (mu-opioid and GABA-A) but both depress brainstem function. This is the most consequential combination in overdose statistics; the app should say the effects converge rather than reporting no interaction.',
+    checks: [
+      { desc: 'Brainstem above 50 at peak', test: (l) => peak(l, (c) => c.model.regions.brainstem * 100) > 50 },
+      { desc: 'Convergent depression is named, not "no interaction"', test: (l) => l.rules.some((r) => r.startsWith('convergence')) && !l.summary.join(' ').includes('No modeled interaction') },
+    ],
   },
   {
     id: 'naloxone-rx',
@@ -374,8 +390,8 @@ const MORE: Scenario[] = [
     id: 'amph-ssri',
     title: 'Amphetamine + SSRI',
     args: ['amphetamines', 'ssri'],
-    expect: 'Different transporters (DAT/NET vs SERT), so no reuptake stacking. Fluoxetine-type SSRIs inhibit CYP2D6 and slow amphetamine clearance.',
-    checks: [{ desc: 'Metabolic interaction, no stacking', test: (l) => l.rules.some((r) => r.startsWith('metabolic')) && !l.rules.some((r) => r.startsWith('stacking')) }],
+    expect: 'Different transporters (DAT/NET vs SERT), so no reuptake stacking. Amphetamine is cleared mostly by the kidneys, so CYP2D6 inhibition does not meaningfully prolong it either: no rule should fire.',
+    checks: [{ desc: 'No interaction rule claimed', test: (l) => l.rules.length === 0 }],
   },
   {
     id: 'ssri-antipsychotic',
@@ -494,6 +510,7 @@ function runScenario(sc: Scenario) {
     if (r.kind === 'stacking') return `stacking: ${NT_INFO[r.nt].name} clearance by ${r.subs.map(name).join(' + ')} (via ${[...new Set(r.via)].join(' + ')})`;
     if (r.kind === 'competition')
       return `competition: ${r.site} between ${r.subs.map(name).join(' and ')}${r.antagonist !== null ? ` (antagonist: ${name(r.antagonist)})` : ''}`;
+    if (r.kind === 'convergence') return `convergence: ${r.subs.map(name).join(' + ')} both depress brainstem function`;
     return `metabolic: ${name(r.slower)} slows ${name(r.slowed)}`;
   });
 
@@ -683,6 +700,31 @@ function scenarioMarkdown(log: Log) {
 const logs = SCENARIOS.map(runScenario);
 const failed = logs.flatMap((l) => l.checks.filter((c) => !c.pass).map((c) => `${l.title}: ${c.desc}`));
 
+// Across all scenarios: more signaling at a receptor family must mean more of its receptors drawn activated.
+// (An earlier version of the animation got this backwards while every per-scenario check still passed.)
+const RECEPTOR_NT: Record<string, NT> = { '5-HT2A': '5HT', D2: 'DA', Adrenergic: 'NE', 'GABA-A': 'GABA', nAChR: 'ACh' };
+const correlations: string[] = [];
+for (const [family, nt] of Object.entries(RECEPTOR_NT)) {
+  const pts = logs.flatMap((l) =>
+    l.timeline.flatMap((c) => {
+      const r = c.animation.receptors.find((x) => x.family === family);
+      return r ? [[c.model.signaling[nt], r.activated / r.total] as const] : [];
+    }),
+  );
+  if (pts.length < 20) continue;
+  const mx = pts.reduce((a, p) => a + p[0], 0) / pts.length;
+  const my = pts.reduce((a, p) => a + p[1], 0) / pts.length;
+  let sxy = 0, sx = 0, sy = 0;
+  for (const [x, y] of pts) {
+    sxy += (x - mx) * (y - my);
+    sx += (x - mx) ** 2;
+    sy += (y - my) ** 2;
+  }
+  const corr = sxy / Math.sqrt(sx * sy || 1);
+  correlations.push(`${family} ${corr.toFixed(2)} (n=${pts.length})`);
+  if (!(corr >= 0.5)) failed.push(`Animation: ${family} receptor activation does not track signaling (correlation ${corr.toFixed(2)}, need at least 0.50)`);
+}
+
 const md = [
   '# Simulation log for accuracy review',
   '',
@@ -700,7 +742,8 @@ const md = [
   '',
   'Definitions: **signaling** = net effect at receptors (includes drugs acting directly on the receptor); **cleft** = how much transmitter is in the gap; **blockade** = share of transporters blocked; effect axes run 0-100 with baselines arousal 50, mood 50, cognition 85, load 12; region values are a 0-100 model index.',
   '',
-  `**Automatic checks:** ${logs.reduce((n, l) => n + l.checks.length, 0)} run, ${failed.length} failed.`,
+  `**Automatic checks:** ${logs.reduce((n, l) => n + l.checks.length, 0)} per-scenario checks plus a receptor-tracking check across all scenarios; ${failed.length} failed.`,
+  `Receptor activation vs. signaling correlation (should be strongly positive): ${correlations.join(', ')}.`,
   failed.length ? failed.map((f) => `- **FAIL** ${f}`).join('\n') : '',
   '',
   '---',

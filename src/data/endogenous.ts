@@ -20,6 +20,7 @@ export const ENDOGENOUS: Record<string, Ligand> = {
   // Endocannabinoids are retrograde messengers: made by the receiving neuron, acting on CB1 on the sending neuron.
   CB1: { name: 'Anandamide', color: '#5FB3D8', shape: 'lipid', source: 'postsynaptic', receptorOn: 'presynaptic' },
   // Adenosine builds up outside cells from the breakdown of ATP rather than being released from vesicles.
+  A1: { name: 'Adenosine', color: '#B7835A', shape: 'small', source: 'surroundings', receptorOn: 'postsynaptic' },
   A2A: { name: 'Adenosine', color: '#B7835A', shape: 'small', source: 'surroundings', receptorOn: 'postsynaptic' },
   NMDA: { name: 'Glutamate', color: '#E8736B', shape: 'small', source: 'presynaptic', receptorOn: 'postsynaptic' },
   nAChR: { name: 'Acetylcholine', color: NT_COLOR.ACh, shape: 'small', source: 'presynaptic', receptorOn: 'postsynaptic' },

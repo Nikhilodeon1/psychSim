@@ -51,12 +51,18 @@ function checkRun(sels: Selection[], r: SimResult) {
 function expectedPairRules(a: string, b: string) {
   const fa = FACTS[a];
   const fb = FACTS[b];
+  const substrateClash = NT_LIST.filter(
+    (n) =>
+      (fa.reverses?.includes(n) && fb.blocksClearance?.[n] === 'transporter' && !fb.reverses?.includes(n)) ||
+      (fb.reverses?.includes(n) && fa.blocksClearance?.[n] === 'transporter' && !fa.reverses?.includes(n)),
+  );
   return {
-    stacking: NT_LIST.filter((n) => fa.blocksClearance?.[n] && fb.blocksClearance?.[n]).sort(),
+    stacking: NT_LIST.filter((n) => fa.blocksClearance?.[n] && fb.blocksClearance?.[n] && !substrateClash.includes(n)).sort(),
     competition:
       Object.keys(fa.sites ?? {}).some((site) => fb.sites?.[site]) ||
       (fa.sites?.D2 === 'antagonist' && RAISES_DOPAMINE.includes(b)) ||
-      (fb.sites?.D2 === 'antagonist' && RAISES_DOPAMINE.includes(a)),
+      (fb.sites?.D2 === 'antagonist' && RAISES_DOPAMINE.includes(a)) ||
+      substrateClash.length > 0,
     metabolic: (fa.slows?.includes(b) ? 1 : 0) + (fb.slows?.includes(a) ? 1 : 0),
   };
 }
@@ -82,7 +88,7 @@ const solo = ids.map((id) => {
 
 // 2. All pairs × intensities × offsets (second substance offset), checked against the fact base at offset 0
 const intensities: Intensity[] = ['low', 'typical', 'high'];
-const ruleCounts = { stacking: 0, competition: 0, metabolic: 0, none: 0 };
+const ruleCounts = { stacking: 0, competition: 0, metabolic: 0, convergence: 0, none: 0 };
 let runs = 0;
 const pairDetails: string[] = [];
 for (let i = 0; i < ids.length; i++)

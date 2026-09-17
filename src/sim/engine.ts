@@ -18,7 +18,8 @@ const REGION_SCALE = 0.9;
 export type Rule =
   | { kind: 'stacking'; nt: NT; subs: number[]; via: ('transporter' | 'enzyme')[]; overlap: number[] }
   | { kind: 'competition'; site: string; family: string; subs: number[]; antagonist: number | null; overlap: number[] }
-  | { kind: 'metabolic'; slower: number; slowed: number; overlap: number[] };
+  | { kind: 'metabolic'; slower: number; slowed: number; overlap: number[] }
+  | { kind: 'convergence'; subs: number[]; overlap: number[] };
 
 export type SimSub = {
   slot: number;
@@ -67,7 +68,7 @@ export const REGION_INFO: Record<Region, { label: string; role: string }> = {
   accumbens: { label: 'Nucleus accumbens', role: 'Mesolimbic reward pathway (dopamine)' },
   pfc: { label: 'Prefrontal cortex', role: 'Executive function' },
   amygdala: { label: 'Amygdala', role: 'Arousal and threat appraisal' },
-  brainstem: { label: 'Brainstem', role: 'Basic physiological regulation' },
+  brainstem: { label: 'Brainstem', role: 'Breathing and heart rate' },
 };
 
 const NT_REGION: Record<NT, Region[]> = {
@@ -162,8 +163,10 @@ export function simulate(selections: Selection[]): SimResult {
     for (const e of involved) {
       const others = idx.filter((j) => j !== e.i);
       if (antagonist) {
+        // A competitive antagonist with higher affinity (naloxone at mu) displaces most agonist binding;
+        // that is why it works as a reversal agent.
         if (e.i === antagonist.i) dampen(e.i, 0.9, others);
-        else dampen(e.i, 0.55, [antagonist.i]);
+        else dampen(e.i, 0.12, [antagonist.i]);
       } else dampen(e.i, 0.8, others);
     }
     rules.push({
@@ -174,6 +177,31 @@ export function simulate(selections: Selection[]): SimResult {
       antagonist: antagonist ? antagonist.i : null,
       overlap: overlapOf(idx, curves),
     });
+  }
+
+  // A releaser has to be carried into the terminal by the transporter it reverses, so a blocker of that
+  // transporter gets in its way: that pair competes for the transporter instead of stacking on it.
+  for (const nt of NT_LIST) {
+    const releasers = picked.map((p, i) => (p.sub.sim.reverses?.includes(nt) ? i : -1)).filter((i) => i >= 0);
+    const blockers = picked
+      .map((p, i) =>
+        (p.sub.sim.clearance[nt] ?? 0) >= 0.3 && p.sub.sim.clearanceVia !== 'enzyme' && !p.sub.sim.reverses?.includes(nt) ? i : -1,
+      )
+      .filter((i) => i >= 0);
+    for (const rI of releasers)
+      for (const bI of blockers) {
+        if (!overlaps([rI, bI], curves)) continue;
+        dampen(rI, 0.3, [bI]);
+        dampen(bI, 0.9, [rI]);
+        rules.push({
+          kind: 'competition',
+          site: `${NT_INFO[nt].transporter} (substrate site)`,
+          family: NT_INFO[nt].transporter,
+          subs: [rI, bI],
+          antagonist: bI,
+          overlap: overlapOf([rI, bI], curves),
+        });
+      }
   }
 
   const subs: SimSub[] = picked.map((p, i) => {
@@ -193,7 +221,13 @@ export function simulate(selections: Selection[]): SimResult {
   // Rule 1 — reuptake / clearance stacking on the same neurotransmitter.
   const stacked = new Set<NT>();
   for (const nt of NT_LIST) {
-    const idx = subs.map((s, i) => ((s.sub.sim.clearance[nt] ?? 0) >= 0.3 ? i : -1)).filter((i) => i >= 0);
+    const releasers = subs.map((s, i) => (s.sub.sim.reverses?.includes(nt) ? i : -1)).filter((i) => i >= 0);
+    const blockers = subs
+      .map((s, i) => ((s.sub.sim.clearance[nt] ?? 0) >= 0.3 && s.sub.sim.clearanceVia !== 'enzyme' && !s.sub.sim.reverses?.includes(nt) ? i : -1))
+      .filter((i) => i >= 0);
+    const idx = subs
+      .map((s, i) => ((s.sub.sim.clearance[nt] ?? 0) >= 0.3 && !(releasers.length && blockers.length && releasers.includes(i)) ? i : -1))
+      .filter((i) => i >= 0);
     if (idx.length < 2 || !overlaps(idx, curves)) continue;
     stacked.add(nt);
     rules.push({
@@ -204,6 +238,13 @@ export function simulate(selections: Selection[]): SimResult {
       overlap: overlapOf(idx, subs.map((s) => s.activity)),
     });
   }
+
+  // Two depressants at different receptors still slow the same brainstem functions.
+  const depressants = subs
+    .map((s, i) => (['Depressant', 'Opioid'].includes(s.sub.cls) && s.sub.sim.axes.arousal <= -10 && s.sub.sim.axes.load >= 10 ? i : -1))
+    .filter((i) => i >= 0);
+  if (depressants.length >= 2 && overlaps(depressants, curves))
+    rules.push({ kind: 'convergence', subs: depressants, overlap: overlapOf(depressants, subs.map((s) => s.activity)) });
 
   const nt = rec(NT_LIST, zeros);
   const cleft = rec(NT_LIST, zeros);
@@ -265,6 +306,11 @@ export function simulate(selections: Selection[]): SimResult {
       } else if (r.kind === 'metabolic') {
         axes.load[k] += 7 * o;
         regionBoost.brainstem[k] += 0.15 * o;
+      } else if (r.kind === 'convergence') {
+        // supra-additive depression of brainstem function
+        axes.load[k] += 16 * o;
+        axes.arousal[k] -= 8 * o;
+        regionBoost.brainstem[k] += 0.4 * o;
       }
     }
     // Saturate smoothly toward 0 or 100 instead of clipping, so stronger combinations stay distinguishable.
@@ -304,7 +350,9 @@ function blurb(subs: SimSub[], rules: Rule[]): string[] {
     out.push(
       allTransport
         ? `Combined ${list(group.map((g) => NT_INFO[g.nt].transporter))} inhibition from ${list(r.subs.map(name))} produces supra-additive synaptic ${nts} accumulation, modeled at ${STACK_FACTOR}× the linear sum.`
-        : `${list(r.subs.map(name))} block ${nts} clearance through separate routes (transporter reuptake and MAO breakdown), producing supra-additive synaptic accumulation, modeled at ${STACK_FACTOR}× the linear sum.`,
+        : `${list(r.subs.map(name))} block ${nts} clearance through separate routes (transporter reuptake and MAO breakdown), producing supra-additive synaptic accumulation, modeled at ${STACK_FACTOR}× the linear sum.${
+            group.some((g) => g.nt === '5HT') ? ' This pairing is the mechanism behind serotonin syndrome, which is why the two are not combined.' : ''
+          }`,
     );
   }
   for (const r of rules) {
@@ -312,10 +360,13 @@ function blurb(subs: SimSub[], rules: Rule[]): string[] {
     if (r.antagonist !== null) {
       const others = r.subs.filter((i) => i !== r.antagonist);
       const indirect = others.every((i) => !subs[i].sub.sim.receptors.find((x) => x.site === r.site)?.direct);
+      const substrate = r.site.includes('substrate site');
       out.push(
-        indirect
-          ? `${poss(name(r.antagonist))} ${r.family} blockade limits postsynaptic action of the dopamine elevated by ${list(others.map(name))}, reducing net potency on each side.`
-          : `Competitive antagonism at ${r.family} receptors: ${verb(name(r.antagonist), 'occupies', 'occupy')} binding sites without activating them, displacing ${list(others.map(name))} and sharply reducing net agonist potency.`,
+        substrate
+          ? `${list(others.map(name))} must be carried into the terminal through ${r.family} to reverse it, and ${verb(name(r.antagonist), 'occupies', 'occupy')} that same site, so less gets in and release is smaller than ${others.length > 1 ? 'they' : 'it'} would produce alone.`
+          : indirect
+            ? `${poss(name(r.antagonist))} ${r.family} blockade limits postsynaptic action of the dopamine elevated by ${list(others.map(name))}, reducing net potency on each side.`
+            : `Competitive antagonism at ${r.family} receptors: ${verb(name(r.antagonist), 'occupies', 'occupy')} binding sites without activating them, displacing ${list(others.map(name))} and sharply reducing net agonist potency.`,
       );
     } else {
       out.push(
@@ -324,9 +375,19 @@ function blurb(subs: SimSub[], rules: Rule[]): string[] {
     }
   }
   for (const r of rules) {
+    if (r.kind !== 'convergence') continue;
+    out.push(
+      `${list(r.subs.map(name))} act at different receptors, so no shared-site rule applies, but both slow the same brainstem functions; the model adds extra Physiological Load for that convergence.`,
+    );
+  }
+  for (const r of rules) {
     if (r.kind !== 'metabolic') continue;
     out.push(
-      `${verb(name(r.slower), 'slows', 'slow')} clearance of ${name(r.slowed)}, lengthening its half-life by up to ${HALF_LIFE_STRETCH}× while both are present and prolonging their overlap.`,
+      `${verb(name(r.slower), 'slows', 'slow')} clearance of ${name(r.slowed)}, lengthening its half-life by up to ${HALF_LIFE_STRETCH}× while both are present and prolonging their overlap.${
+        subs[r.slower].sub.id === 'alcohol' && subs[r.slowed].sub.id === 'cocaine'
+          ? ' The liver also combines the two into cocaethylene, a longer-lasting active compound.'
+          : ''
+      }`,
     );
   }
 
@@ -374,6 +435,7 @@ function drivers(subs: SimSub[], rules: Rule[]): Record<Axis, string> {
       for (const r of rules) {
         if (r.kind === 'stacking') parts.push(`stacked ${NT_INFO[r.nt].transporter} blockade`);
         if (r.kind === 'metabolic') parts.push(`prolonged ${subs[r.slowed].sub.name} clearance`);
+        if (r.kind === 'convergence') parts.push('convergent depression of brainstem function');
       }
     }
     res[ax] = parts.length ? parts.join(' · ') : 'no substantial contribution';

@@ -17,7 +17,8 @@ export const GLOSSARY: Record<string, { full?: string; def: string }> = {
   'μ-opioid': { full: 'Mu-opioid receptor', def: 'Receptor for endorphins. Main target of morphine, heroin and oxycodone.' },
   NMDA: { full: 'NMDA glutamate receptor', def: 'Excitatory glutamate receptor. Blocked by PCP and ketamine; inhibited by alcohol.' },
   CB1: { full: 'Cannabinoid receptor 1', def: "Receptor for the brain's own endocannabinoids. Activated by THC." },
-  A2A: { full: 'Adenosine A2A receptor', def: 'Adenosine receptor that dampens neural activity. Blocked by caffeine.' },
+  A1: { full: 'Adenosine A1 receptor', def: 'Main adenosine receptor that quiets neurons; adenosine builds up while awake. Caffeine blocks it.' },
+  A2A: { full: 'Adenosine A2A receptor', def: 'Second adenosine receptor, involved in sleep pressure through striatal circuits. Also blocked by caffeine.' },
 
   // general
   Agonist: { def: 'A substance that mimics or strengthens a neurotransmitter’s effect.' },
@@ -29,9 +30,9 @@ export const GLOSSARY: Record<string, { full?: string; def: string }> = {
   // natural messengers
   Endorphins: { def: "The body's own opioids. Released during pain or stress; activate mu-opioid receptors." },
   Anandamide: { def: 'An endocannabinoid. Made by the receiving neuron and sent backward to CB1 receptors, reducing release.' },
-  Adenosine: { def: 'Builds up outside neurons as energy (ATP) is used; activates A2A receptors and dampens activity.' },
+  Adenosine: { def: 'Builds up outside neurons as energy (ATP) is used; acts at A1 receptors and makes you sleepy.' },
   Glutamate: { def: 'The main excitatory neurotransmitter; activates NMDA receptors.' },
-  Acetylcholine: { def: 'Neurotransmitter for muscle movement, attention and memory; activates nicotinic receptors.' },
+  Acetylcholine: { def: 'Neurotransmitter for muscle movement, attention and memory; activates nicotinic and muscarinic receptors.' },
   GABA: { def: 'The main inhibitory neurotransmitter; activates GABA-A receptors.' },
   Serotonin: { def: 'Neurotransmitter involved in mood, sleep and perception; activates 5-HT receptors such as 5-HT2A.' },
   Dopamine: { def: 'Neurotransmitter involved in reward, motivation and movement; activates D2 and other dopamine receptors.' },
@@ -39,6 +40,7 @@ export const GLOSSARY: Record<string, { full?: string; def: string }> = {
 
   // interaction rules
   'Reuptake stacking': { def: 'Two substances block clearance of the same neurotransmitter, so it builds up more than either alone.' },
-  'Receptor competition': { def: 'Two substances target the same binding site, so each binds less than it would alone.' },
+  'Receptor competition': { def: 'Two things compete for one site: two drugs, or a drug and the neurotransmitter itself. Each binds less.' },
+  'Convergent depression': { def: 'Two depressants act at different receptors but slow the same brainstem functions, so the load adds up.' },
   'Metabolic interaction': { def: 'One substance slows the body’s clearance of another, so the second lasts longer.' },
 };

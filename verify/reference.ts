@@ -89,7 +89,7 @@ export const FACTS: Record<string, Fact> = {
     cls: 'Stimulant',
     polarity: 'Antagonist',
     systems: ['NE', 'DA', 'ACh'],
-    sites: { 'Adenosine A2A': 'antagonist' },
+    sites: { 'Adenosine A1': 'antagonist' },
     tmax: [0.5, 2],
     halfLife: [3, 7],
     direction: { arousal: 1, cognition: 0 },
@@ -110,6 +110,8 @@ export const FACTS: Record<string, Fact> = {
     systems: ['DA', 'NE'],
     blocksClearance: { DA: 'transporter', NE: 'transporter' },
     reverses: ['DA', 'NE'],
+    // Amphetamine is a weak serotonin releaser; textbooks list it as a dopamine/norepinephrine drug.
+
     tmax: [1, 4],
     halfLife: [9, 14],
     direction: { arousal: 1, cognition: 0 },
@@ -222,11 +224,11 @@ export const FACTS: Record<string, Fact> = {
     polarity: 'Agonist',
     systems: ['5HT'],
     blocksClearance: { '5HT': 'transporter' },
-    slows: ['mdma', 'amphetamines', 'rx-opioids', 'antipsychotics'],
+    slows: ['mdma', 'antipsychotics'],
     tmax: [4, 8],
     halfLife: [20, 100],
     direction: { arousal: 0, cognition: 0 },
-    note: 'Fluoxetine/paroxetine inhibit CYP2D6, which metabolizes MDMA, amphetamine, oxycodone (partly) and haloperidol.',
+    note: 'Fluoxetine/paroxetine inhibit CYP2D6, which metabolizes MDMA and haloperidol. Oxycodone is a poor example: CYP2D6 inhibition reduces formation of its active metabolite rather than simply prolonging it; amphetamine is cleared mostly renally.',
   },
   maoi: {
     cls: 'Other',
@@ -245,7 +247,8 @@ export const FACTS: Record<string, Fact> = {
     sites: { D2: 'antagonist' },
     tmax: [2, 6],
     halfLife: [14, 37],
-    direction: { arousal: -1, cognition: 0 },
+    // D2 blockade at therapeutic occupancy causes extrapyramidal motor effects, the mirror of L-DOPA.
+    direction: { arousal: -1, cognition: -1 },
     topRegion: 'accumbens',
   },
   ldopa: {
@@ -283,6 +286,7 @@ export const FORBIDDEN_TEXT = [
 export const NATURAL_LIGANDS: Record<string, { name: string; receptorOn: 'presynaptic' | 'postsynaptic'; source: 'presynaptic' | 'postsynaptic' | 'surroundings' }> = {
   'μ-opioid': { name: 'Endorphins', receptorOn: 'postsynaptic', source: 'surroundings' },
   CB1: { name: 'Anandamide', receptorOn: 'presynaptic', source: 'postsynaptic' },
+  A1: { name: 'Adenosine', receptorOn: 'postsynaptic', source: 'surroundings' },
   A2A: { name: 'Adenosine', receptorOn: 'postsynaptic', source: 'surroundings' },
   NMDA: { name: 'Glutamate', receptorOn: 'postsynaptic', source: 'presynaptic' },
   nAChR: { name: 'Acetylcholine', receptorOn: 'postsynaptic', source: 'presynaptic' },

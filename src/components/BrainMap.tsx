@@ -101,13 +101,13 @@ export function BrainMap({ values, boosted }: Props) {
         <div className="scale">
           <div className="scale-bar" style={{ background: RAMP }} />
           <div className="scale-ticks">
-            <span>0 · baseline</span>
+            <span>0 · unaffected</span>
             <span>50</span>
-            <span>100 · strongest</span>
+            <span>100 · strongest effect</span>
           </div>
         </div>
         <ul className="key-notes">
-          <li>Shade = how strongly the selected substances act in that region at the current time (0–100 model index).</li>
+          <li>Shade = how strongly the selected substances <b>affect</b> that region right now (0–100 model index). It shows strength, not direction: a depressant slowing the brainstem and a stimulant driving the accumbens both shade dark.</li>
           <li>
             <span className="key-circle" /> Deep structure, not visible in a midline cut; drawn at its approximate position.
           </li>

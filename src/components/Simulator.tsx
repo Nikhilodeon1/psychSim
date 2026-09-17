@@ -77,12 +77,14 @@ const RULE_NAME: Record<Rule['kind'], string> = {
   stacking: 'Reuptake stacking',
   competition: 'Receptor competition',
   metabolic: 'Metabolic interaction',
+  convergence: 'Convergent depression',
 };
 
 function ruleDetail(r: Rule, res: SimResult) {
   const n = (i: number) => res.subs[i].sub.name;
   if (r.kind === 'stacking') return `${NT_INFO[r.nt].transporter}: ${r.subs.map(n).join(' + ')}`;
   if (r.kind === 'competition') return `${r.family}: ${r.subs.map(n).join(' vs ')}`;
+  if (r.kind === 'convergence') return `brainstem: ${r.subs.map(n).join(' + ')}`;
   return `${n(r.slower)} slows ${n(r.slowed)}`;
 }
 
@@ -463,6 +465,7 @@ export function Simulator() {
           <figcaption className="cap">
             <span className="fig-no">Fig. 2</span>
             <span className="fig-title">Brain regions</span>
+            <span className="fig-sub">how strongly each region is affected, not the direction</span>
           </figcaption>
           <BrainMap values={regions.vals} boosted={regions.boosted} />
         </figure>
@@ -484,6 +487,10 @@ export function Simulator() {
                 <span className="fig-sub">0–100, dashed line = baseline</span>
               </figcaption>
               <AxisCharts result={result} time={time} />
+              <p className="axis-note">
+                Mood valence shows the acute effect within 8 hours only. SSRIs and MAO inhibitors raise serotonin within
+                hours but take two to six weeks to change mood, so their mood line stays flat here.
+              </p>
             </figure>
           </>
         )}

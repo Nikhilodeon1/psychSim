@@ -38,8 +38,10 @@ export function formatTrace(r: SimResult, stepHours = 0.5): string {
       rule.kind === 'stacking'
         ? `${NT_INFO[rule.nt].name} via ${rule.via.join('/')} — ${rule.subs.map(name).join(' + ')}`
         : rule.kind === 'competition'
-          ? `${rule.site} — ${rule.subs.map(name).join(' vs ')}${rule.antagonist !== null ? ` (antagonist: ${name(rule.antagonist)})` : ''}`
-          : `${name(rule.slower)} slows ${name(rule.slowed)}`;
+          ? `${rule.site} — ${rule.subs.map(name).join(' vs ')}${rule.antagonist !== null ? ` (blocks access: ${name(rule.antagonist)})` : ''}`
+          : rule.kind === 'convergence'
+            ? `${rule.subs.map(name).join(' + ')} — both depress brainstem function`
+            : `${name(rule.slower)} slows ${name(rule.slowed)}`;
     lines.push(`  ${rule.kind.padEnd(12)} ${detail}  [max overlap ${f2(peak)}]`);
   }
   lines.push('');
