@@ -252,7 +252,7 @@ export function stepWorld(world: World, t: number, dt: number) {
           : src === 'postsynaptic'
             ? { x: cx + rand(-60, 60), y: CLEFT_BOT - 2, vx: rand(-20, 20), vy: rand(-90, -50) }
             : { x: cx + fromSide * 90, y: rand(CLEFT_TOP + 20, CLEFT_BOT - 20), vx: -fromSide * rand(30, 60), vy: 0 };
-      mols.push({ kind: 'endo', lig, ...spawn, state: 'free', timer: rand(3, 6), alpha: 1 });
+      mols.push({ kind: 'endo', lig, ...spawn, state: 'free', timer: rand(3, 6), alpha: 1, seed: Math.floor(rng() * 1000) });
     }
   }
 
@@ -348,14 +348,18 @@ export function stepWorld(world: World, t: number, dt: number) {
       }
     } else {
       m.vx += rand(-150, 150) * dt;
-      m.vy += rand(-150, 150) * dt + (m.kind === 'nt' ? 40 : m.kind === 'drug' ? 20 : 0) * dt;
-      if (m.kind === 'drug') m.vx += (W / 2 - m.x) * dt * 0.12;
+      // random diffusion with only a slight net drift away from the release side (no settling on the floor)
+      m.vy += rand(-150, 150) * dt + (m.kind === 'nt' ? 8 : 0) * dt;
+      if (m.kind === 'drug') m.vx += (W / 2 - m.x) * dt * 0.03;
       if (m.kind === 'endo') {
         // stay near own receptors; broken down after a few seconds
         const group = receptors.filter((r) => r.lig === m.lig);
         if (group.length) {
-          m.vx += ((group[0].x + group[group.length - 1].x) / 2 - m.x) * dt * 0.5;
-          m.vy += ((group[0].pre ? CLEFT_TOP : CLEFT_BOT) - m.y) * dt * 0.5;
+          const home = ((m.seed ?? 0) % 100) / 100;
+          const hx = group[0].x - 30 + home * (group[group.length - 1].x - group[0].x + 60);
+          const hy = group[0].pre ? CLEFT_TOP + 20 + home * 40 : CLEFT_BOT - 20 - home * 40;
+          m.vx += (hx - m.x) * dt * 0.15;
+          m.vy += (hy - m.y) * dt * 0.15;
         }
         m.timer -= dt;
         if (m.timer <= 0) m.state = 'fade';
@@ -473,18 +477,31 @@ export function stepWorld(world: World, t: number, dt: number) {
         const s = subs[m.sub!];
         const pumpTargets = pumps.filter((p) => !p.enzyme && (s.sub.sim.clearance[p.nt] ?? 0) >= 0.3 && s.sub.sim.clearanceVia !== 'enzyme');
         const recTargets = receptors.filter((r) => acts.some((a) => a.family === r.family));
+        // each molecule wanders around its own spot near its targets, so they spread out instead of clumping
+        const spread = (((m.seed ?? 0) * 37) % 100) / 100;
+        const depth = (((m.seed ?? 0) * 61) % 100) / 100;
         if (pumpTargets.length) {
-          // hover loosely near the transporters it blocks
           const p = pumpTargets[(m.seed ?? 0) % pumpTargets.length];
-          m.vx += (p.x - m.x) * dt * 0.35;
-          m.vy += (PRE_Y + 50 - m.y) * dt * 0.35;
+          m.vx += (p.x - 50 + spread * 100 - m.x) * dt * 0.15;
+          m.vy += (PRE_Y + 25 + depth * 50 - m.y) * dt * 0.15;
         } else if (recTargets.length) {
-          const r = recTargets.reduce((a, b) => (Math.abs(a.x - m.x) < Math.abs(b.x - m.x) ? a : b));
-          m.vx += (r.x - m.x) * dt * 0.6;
-          m.vy += ((r.pre ? CLEFT_TOP : CLEFT_BOT) - m.y) * dt * 0.6;
+          const xs = recTargets.map((r) => r.x);
+          const pre = recTargets[0].pre;
+          m.vx += (Math.min(...xs) - 30 + spread * (Math.max(...xs) - Math.min(...xs) + 60) - m.x) * dt * 0.15;
+          m.vy += ((pre ? CLEFT_TOP + 15 + depth * 45 : CLEFT_BOT - 15 - depth * 45) - m.y) * dt * 0.15;
+        } else {
+          // nothing it acts on is drawn: wander through the cleft rather than waiting at the edge it came in from
+          m.vx += (150 + spread * (W - 300) - m.x) * dt * 0.12;
+          m.vy += (CLEFT_TOP + 20 + depth * (CLEFT_BOT - CLEFT_TOP - 40) - m.y) * dt * 0.12;
         }
       }
     }
+  }
+  // A molecule that reaches a membrane and doesn't bind diffuses back into the cleft rather than parking there.
+  for (const m of mols) {
+    if (m.state !== 'free' || m.aim) continue;
+    if (m.y > CLEFT_BOT - 6) m.vy = -rand(40, 90);
+    else if (m.y < CLEFT_TOP + 6 && m.kind !== 'nt') m.vy = rand(40, 90);
   }
   for (let i = mols.length - 1; i >= 0; i--) if (mols[i].alpha <= 0) mols.splice(i, 1);
 

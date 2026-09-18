@@ -101,6 +101,8 @@ type Window = {
   blockFrames: Map<string, { blocked: number; expected: number; frames: number }>;
   molFrames: Map<NT, { count: number; target: number; frames: number }>;
   edgeLoiter: number;
+  hovering: number;
+  scatter: { sum: number; n: number };
 };
 
 export function narrate(sels: Selection[], opts: { every?: number; events?: boolean; seed?: number } = {}) {
@@ -148,13 +150,17 @@ export function narrate(sels: Selection[], opts: { every?: number; events?: bool
   const prevPlug = new Map(world.pumps.map((p) => [p, p.plug]));
   let prevMols = new Map<Mol, Mol['state']>(world.mols.map((m) => [m, m.state]));
   const edgeSince = new Map<Mol, number>();
+  const hoverSince = new Map<Mol, number>();
+  const bornAt = new Map<Mol, number>();
+  let hoverTotal = 0;
+  const scatterAll: number[] = [];
   const firsts = new Set<string>();
   const verbose: string[] = [];
 
   const framesPerWindow = Math.round((every / DURATION) * FRAMES);
   let win: Window = newWindow(0);
   function newWindow(from: number): Window {
-    return { from, to: from + every, events: new Map(), litFrames: new Map(), blockFrames: new Map(), molFrames: new Map(), edgeLoiter: 0 };
+    return { from, to: from + every, events: new Map(), litFrames: new Map(), blockFrames: new Map(), molFrames: new Map(), edgeLoiter: 0, hovering: 0, scatter: { sum: 0, n: 0 } };
   }
   const note = (t: number, msg: string, notable = false) => {
     win.events.set(msg, (win.events.get(msg) ?? 0) + 1);
@@ -265,6 +271,36 @@ export function narrate(sels: Selection[], opts: { every?: number; events?: bool
       } else edgeSince.delete(m);
     }
 
+    // Hovering: a loose molecule parked just above receptors for 1.5 s without binding.
+    for (const m of world.mols) if (!bornAt.has(m)) bornAt.set(m, f);
+    for (const m of world.mols) {
+      const nearSeat =
+        m.state === 'free' &&
+        world.receptors.some((r) => Math.abs(r.x - m.x) < 30 && (r.pre ? m.y < CLEFT_TOP + 20 : m.y > CLEFT_BOT - 20));
+      if (!nearSeat) {
+        hoverSince.delete(m);
+        continue;
+      }
+      if (!hoverSince.has(m)) hoverSince.set(m, f);
+      if (f - hoverSince.get(m)! === Math.round(FPS * 1.5)) {
+        win.hovering++;
+        hoverTotal++;
+      }
+    }
+    // Scatter: Clark-Evans ratio of loose molecules (1 = randomly scattered, well below 1 = clumped).
+    // Molecules younger than 0.5 s (fresh release bursts) and ones heading for a pump or receptor are left out.
+    if (f % 10 === 0) {
+      const pts = world.mols.filter((m) => m.state === 'free' && !m.aim && f - (bornAt.get(m) ?? f) > FPS * 0.5);
+      if (pts.length >= 6) {
+        const area = (W - 140) * (CLEFT_BOT - CLEFT_TOP);
+        const nn = pts.map((a) => Math.min(...pts.filter((b) => b !== a).map((b) => Math.hypot(a.x - b.x, a.y - b.y))));
+        const R = nn.reduce((x, y) => x + y, 0) / nn.length / (0.5 * Math.sqrt(area / pts.length));
+        win.scatter.sum += R;
+        win.scatter.n++;
+        scatterAll.push(R);
+      }
+    }
+
     // close the window
     if ((f + 1) % framesPerWindow === 0 || f === FRAMES - 1) {
       const tEnd = ((f + 1) / FRAMES) * DURATION;
@@ -315,6 +351,10 @@ export function narrate(sels: Selection[], opts: { every?: number; events?: bool
         if (b > 0.5 && !plugged && !reversed && !world.pumps.find((p) => p.nt === n)?.enzyme) flags.push(`${NT_INFO[n].transporter} is ${Math.round(b * 100)}% blocked in the model but no drug is shown docked in it.`);
         if (sample(result.reversal[n], tEnd) > 0.3 && !events.some(([msg]) => msg.includes('pumped OUT'))) flags.push(`${NT_INFO[n].transporter} is reversed in the model but no molecules were pumped out in this window.`);
       }
+      const scatterR = win.scatter.n ? win.scatter.sum / win.scatter.n : null;
+      out.push(`Animation texture: ${win.hovering} molecule(s) hovered above receptors for 1.5 s+ without binding; scatter ratio ${scatterR === null ? 'n/a' : scatterR.toFixed(2)} (1 = random, lower = clumped).`, '');
+      if (win.hovering >= 5)
+        flags.push(`${win.hovering} molecules hovered just above receptors for 1.5 s+ without binding (unbound molecules should diffuse back into the cleft).`);
       if (win.edgeLoiter) flags.push(`${win.edgeLoiter} drug molecule(s) sat at the edge of the picture for over 3 s (no drawn target to move toward).`);
       if (flags.length) {
         out.push('FLAGS:');
@@ -335,7 +375,8 @@ export function narrate(sels: Selection[], opts: { every?: number; events?: bool
     '',
   ];
   if (opts.events) out.push('# Every event', '', '```', ...verbose, '```');
-  return { combo, text: [...summary, ...out].join('\n'), flags: flagsAll, staticFlags };
+  const meanScatter = scatterAll.length ? scatterAll.reduce((a, b) => a + b, 0) / scatterAll.length : null;
+  return { hoverTotal, meanScatter, combo, text: [...summary, ...out].join('\n'), flags: flagsAll, staticFlags };
 }
 
 /** Combinations every narration audit covers: all single substances plus combinations for each mechanism. */
